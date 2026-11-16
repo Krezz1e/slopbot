@@ -12,7 +12,7 @@ from slopbot.database import SubscriptionStore
 from slopbot.engagement import EngagementCog, send_to_destinations
 from slopbot.info import InfoCog, validate_info_command_coverage
 from slopbot.itemshop import ItemShopCog
-from slopbot.models import DeliveryMethod, delivery_channels
+from slopbot.models import DeliveryMethod, NotificationDowntime, delivery_channels
 from slopbot.notifications import VoiceAlertService, VoiceOccupancyTracker
 from slopbot.rocketleague import RocketLeagueCog, RocketLeagueService, StatusCog
 from slopbot.summary_alerts import SummaryCog
@@ -69,6 +69,10 @@ class AlertsCog(commands.Cog):
     @app_commands.describe(
         delivery="Where Slopbot should send your alerts",
         unlink_telegram="Remove your saved Telegram link",
+        downtime_enabled="Suppress private notifications during a daily time window",
+        downtime_start="Downtime start in 24-hour time, such as 09:00",
+        downtime_end="Downtime end in 24-hour time, such as 17:00",
+        downtime_timezone="IANA timezone, such as America/New_York",
     )
     @app_commands.choices(
         delivery=[
@@ -93,10 +97,29 @@ class AlertsCog(commands.Cog):
         interaction: discord.Interaction,
         delivery: app_commands.Choice[str] | None = None,
         unlink_telegram: bool = False,
+        downtime_enabled: bool | None = None,
+        downtime_start: str | None = None,
+        downtime_end: str | None = None,
+        downtime_timezone: str | None = None,
     ) -> None:
         guild = interaction.guild
         if guild is None:
             await interaction.response.send_message("Use this command in a server.", ephemeral=True)
+            return
+        downtime_requested = any(
+            value is not None
+            for value in (
+                downtime_enabled,
+                downtime_start,
+                downtime_end,
+                downtime_timezone,
+            )
+        )
+        if unlink_telegram and (delivery is not None or downtime_requested):
+            await interaction.response.send_message(
+                "Unlink Telegram separately from changing delivery or downtime settings.",
+                ephemeral=True,
+            )
             return
         if unlink_telegram:
             removed = await self.bot.store.unlink_telegram(discord_user_id=interaction.user.id)
@@ -112,10 +135,13 @@ class AlertsCog(commands.Cog):
             )
             return
 
-        if delivery is None:
-            current = await self.bot.store.get_delivery_method(
-                guild_id=guild.id, user_id=interaction.user.id
-            )
+        current = await self.bot.store.get_delivery_method(
+            guild_id=guild.id, user_id=interaction.user.id
+        )
+        current_downtime = await self.bot.store.get_notification_downtime(
+            guild_id=guild.id, user_id=interaction.user.id
+        )
+        if delivery is None and not downtime_requested:
             linked = (
                 await self.bot.store.get_telegram_chat_id(discord_user_id=interaction.user.id)
                 is not None
@@ -130,40 +156,84 @@ class AlertsCog(commands.Cog):
                 f"Current delivery: **{_delivery_label(current)}**. "
                 f"Telegram is **{'linked' if linked else 'not linked'}**. "
                 f"PWA push is **{'enabled' if push_ready else 'not enabled'}**. "
-                "Run `/notifications` again and choose a delivery option to change it.",
+                f"Downtime is **{_downtime_label(current_downtime)}**. "
+                "Run `/notifications` again to change these settings.",
                 ephemeral=True,
             )
             return
 
-        selected = DeliveryMethod(delivery.value)
+        selected = current if delivery is None else DeliveryMethod(delivery.value)
         channels = delivery_channels(selected)
         uses_telegram = "telegram" in channels
-        if uses_telegram and self.bot.telegram is None:
-            await interaction.response.send_message(
-                "Telegram delivery is not configured on this bot yet. Ask the server owner to "
-                "set TELEGRAM_BOT_TOKEN.",
-                ephemeral=True,
-            )
-            return
-        if "pwa" in channels:
-            push = getattr(getattr(self.bot, "web", None), "push", None)
-            if (
-                push is None
-                or not push.configured
-                or not await push.has_subscriptions(interaction.user.id)
-            ):
+        if delivery is not None:
+            if uses_telegram and self.bot.telegram is None:
                 await interaction.response.send_message(
-                    "Enable PWA push for this account from the website before selecting it.",
+                    "Telegram delivery is not configured on this bot yet. Ask the server owner to "
+                    "set TELEGRAM_BOT_TOKEN.",
                     ephemeral=True,
                 )
                 return
-        await self.bot.store.set_delivery_method(
-            guild_id=guild.id,
-            user_id=interaction.user.id,
-            delivery_method=selected,
-        )
+            if "pwa" in channels:
+                push = getattr(getattr(self.bot, "web", None), "push", None)
+                if (
+                    push is None
+                    or not push.configured
+                    or not await push.has_subscriptions(interaction.user.id)
+                ):
+                    await interaction.response.send_message(
+                        "Enable PWA push for this account from the website before selecting it.",
+                        ephemeral=True,
+                    )
+                    return
+
+        updated_downtime = current_downtime
+        if downtime_requested:
+            try:
+                updated_downtime = NotificationDowntime(
+                    enabled=(
+                        current_downtime.enabled if downtime_enabled is None else downtime_enabled
+                    ),
+                    start_minute=(
+                        current_downtime.start_minute
+                        if downtime_start is None
+                        else _parse_clock(downtime_start)
+                    ),
+                    end_minute=(
+                        current_downtime.end_minute
+                        if downtime_end is None
+                        else _parse_clock(downtime_end)
+                    ),
+                    timezone=(
+                        current_downtime.timezone
+                        if downtime_timezone is None
+                        else downtime_timezone.strip()
+                    ),
+                )
+            except ValueError as exc:
+                await interaction.response.send_message(str(exc), ephemeral=True)
+                return
+
+        if delivery is not None:
+            await self.bot.store.set_delivery_method(
+                guild_id=guild.id,
+                user_id=interaction.user.id,
+                delivery_method=selected,
+            )
+        if downtime_requested:
+            await self.bot.store.set_notification_downtime(
+                guild_id=guild.id,
+                user_id=interaction.user.id,
+                downtime=updated_downtime,
+            )
+
+        saved = []
+        if delivery is not None:
+            saved.append(f"Delivery set to **{_delivery_label(selected)}**.")
+        if downtime_requested:
+            saved.append(f"Downtime is **{_downtime_label(updated_downtime)}**.")
+        confirmation = " ".join(saved)
         linked_chat = await self.bot.store.get_telegram_chat_id(discord_user_id=interaction.user.id)
-        if uses_telegram and linked_chat is None:
+        if delivery is not None and uses_telegram and linked_chat is None:
             try:
                 if self.bot.telegram is None:
                     raise TelegramError("Telegram is not configured")
@@ -181,15 +251,13 @@ class AlertsCog(commands.Cog):
             view = discord.ui.View(timeout=600)
             view.add_item(discord.ui.Button(label="Link Telegram", url=link_url))
             await interaction.response.send_message(
-                f"Delivery set to **{_delivery_label(selected)}**. Select **Link Telegram** "
+                f"{confirmation} Select **Link Telegram** "
                 "within 10 minutes, then press **Start** in Telegram.",
                 view=view,
                 ephemeral=True,
             )
             return
-        await interaction.response.send_message(
-            f"Delivery set to **{_delivery_label(selected)}**.", ephemeral=True
-        )
+        await interaction.response.send_message(confirmation, ephemeral=True)
 
     @app_commands.command(
         name="testnotification",
@@ -420,3 +488,30 @@ def _delivery_label(delivery: DeliveryMethod) -> str:
         DeliveryMethod.TELEGRAM_PWA: "Telegram and PWA push",
         DeliveryMethod.ALL: "Discord, Telegram, and PWA push",
     }[delivery]
+
+
+def _parse_clock(value: str) -> int:
+    parts = value.strip().split(":")
+    if (
+        len(parts) != 2
+        or not 1 <= len(parts[0]) <= 2
+        or len(parts[1]) != 2
+        or not all(part.isdigit() for part in parts)
+    ):
+        raise ValueError("Use 24-hour times such as 09:00 and 17:00.")
+    hour, minute = (int(part) for part in parts)
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+        raise ValueError("Use 24-hour times such as 09:00 and 17:00.")
+    return hour * 60 + minute
+
+
+def _clock_label(minute: int) -> str:
+    return f"{minute // 60:02}:{minute % 60:02}"
+
+
+def _downtime_label(downtime: NotificationDowntime) -> str:
+    window = (
+        f"{_clock_label(downtime.start_minute)}-{_clock_label(downtime.end_minute)} "
+        f"{downtime.timezone}"
+    )
+    return f"enabled for {window}" if downtime.enabled else f"disabled ({window} saved)"

@@ -111,6 +111,7 @@ async def test_telegram_only_notification_falls_back_to_discord() -> None:
     bot = SimpleNamespace(get_user=lambda _user_id: user)
     store = SimpleNamespace(
         get_delivery_method=AsyncMock(return_value=DeliveryMethod.TELEGRAM),
+        notification_downtime_active=AsyncMock(return_value=False),
         get_telegram_chat_id=AsyncMock(return_value=123),
     )
     telegram = SimpleNamespace(send_message=AsyncMock(return_value=False))
@@ -136,7 +137,10 @@ async def test_pwa_notification_uses_linked_web_push() -> None:
         )
     )
     bot = SimpleNamespace(web=SimpleNamespace(push=push), get_user=lambda _: None)
-    store = SimpleNamespace(get_delivery_method=AsyncMock(return_value=DeliveryMethod.PWA))
+    store = SimpleNamespace(
+        get_delivery_method=AsyncMock(return_value=DeliveryMethod.PWA),
+        notification_downtime_active=AsyncMock(return_value=False),
+    )
 
     outcome = await send_to_destinations(
         bot=cast(Any, bot),
@@ -158,6 +162,7 @@ async def test_summary_retries_only_failed_destinations() -> None:
     bot = SimpleNamespace(get_user=lambda _: user)
     store = SimpleNamespace(
         get_delivery_method=AsyncMock(return_value=DeliveryMethod.BOTH),
+        notification_downtime_active=AsyncMock(return_value=False),
         get_telegram_chat_id=AsyncMock(return_value=123),
     )
     telegram = SimpleNamespace(send_message=AsyncMock(side_effect=[False, True]))
@@ -177,6 +182,40 @@ async def test_summary_retries_only_failed_destinations() -> None:
     assert second.delivered and not second.retryable
     user.send.assert_awaited_once()
     assert telegram.send_message.await_count == 2
+
+
+async def test_notification_downtime_suppresses_every_private_destination() -> None:
+    user = SimpleNamespace(send=AsyncMock())
+    push = SimpleNamespace(send=AsyncMock())
+    bot = SimpleNamespace(web=SimpleNamespace(push=push), get_user=lambda _: user)
+    store = SimpleNamespace(
+        get_delivery_method=AsyncMock(return_value=DeliveryMethod.ALL),
+        notification_downtime_active=AsyncMock(return_value=True),
+        get_telegram_chat_id=AsyncMock(return_value=123),
+    )
+    telegram = SimpleNamespace(send_message=AsyncMock(return_value=True))
+
+    outcome = await send_to_destinations(
+        bot=cast(Any, bot),
+        store=cast(Any, store),
+        telegram=cast(Any, telegram),
+        guild_id=1,
+        recipient_id=2,
+        discord_embed=discord.Embed(title="Test"),
+        telegram_text="Test",
+    )
+
+    assert outcome.delivered is False
+    assert outcome.retryable is False
+    assert "suppressed" in outcome.detail
+    assert {receipt[:2] for receipt in outcome.receipts} == {
+        ("discord", "blocked"),
+        ("pwa", "blocked"),
+        ("telegram", "blocked"),
+    }
+    user.send.assert_not_awaited()
+    telegram.send_message.assert_not_awaited()
+    push.send.assert_not_awaited()
 
 
 async def test_geton_does_not_deliver_after_recipient_leaves(monkeypatch: Any) -> None:

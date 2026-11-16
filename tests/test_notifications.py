@@ -52,6 +52,7 @@ def fake_store(
     return SimpleNamespace(
         list_for_channel=AsyncMock(return_value=[subscription]),
         get_delivery_method=AsyncMock(return_value=delivery),
+        notification_downtime_active=AsyncMock(return_value=False),
         get_telegram_chat_id=AsyncMock(return_value=1234),
     )
 
@@ -343,6 +344,24 @@ async def test_both_delivery_sends_discord_and_telegram() -> None:
     telegram.send_message.assert_awaited_once()
     assert telegram.send_message.await_args.kwargs["chat_id"] == 1234
     assert "Voice 30 is active" in telegram.send_message.await_args.kwargs["text"]
+
+
+async def test_voice_alert_is_suppressed_during_notification_downtime() -> None:
+    subscription = Subscription(1, 10, 20, 30, 3, True, False)
+    store = fake_store(subscription, delivery=DeliveryMethod.BOTH)
+    store.notification_downtime_active.return_value = True
+    member = SimpleNamespace(send=AsyncMock())
+    telegram = SimpleNamespace(send_message=AsyncMock(return_value=True))
+    service = VoiceAlertService(
+        cast(Any, SimpleNamespace()), cast(Any, store), telegram=cast(Any, telegram)
+    )
+    channel = fake_channel(30, member_count=3)
+    grant_access(channel, member)
+
+    await service.handle_channel_transition(channel=channel, previous_count=2, current_count=3)
+
+    member.send.assert_not_awaited()
+    telegram.send_message.assert_not_awaited()
 
 
 async def test_voice_alert_sends_pwa_push() -> None:

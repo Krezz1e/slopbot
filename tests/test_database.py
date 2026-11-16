@@ -20,6 +20,7 @@ from slopbot.models import (
     ItemShopItem,
     ItemShopPrice,
     KeywordNotificationMode,
+    NotificationDowntime,
     ResponseVisibility,
     RocketLeagueEvent,
 )
@@ -262,6 +263,19 @@ async def test_notification_delivery_defaults_to_discord(store: SubscriptionStor
     assert await store.get_delivery_method(guild_id=1, user_id=2) is DeliveryMethod.ALL
 
 
+async def test_notification_downtime_defaults_and_persists_with_delivery(
+    store: SubscriptionStore,
+) -> None:
+    assert await store.get_notification_downtime(guild_id=1, user_id=2) == NotificationDowntime()
+
+    downtime = NotificationDowntime(True, 9 * 60, 17 * 60, "America/Los_Angeles")
+    await store.set_notification_downtime(guild_id=1, user_id=2, downtime=downtime)
+    await store.set_delivery_method(guild_id=1, user_id=2, delivery_method=DeliveryMethod.BOTH)
+
+    assert await store.get_notification_downtime(guild_id=1, user_id=2) == downtime
+    assert await store.get_delivery_method(guild_id=1, user_id=2) is DeliveryMethod.BOTH
+
+
 async def test_notification_delivery_migration_preserves_legacy_preferences(tmp_path) -> None:
     database_path = tmp_path / "legacy.db"
     with sqlite3.connect(database_path) as connection:
@@ -280,8 +294,32 @@ async def test_notification_delivery_migration_preserves_legacy_preferences(tmp_
     await migrated.initialize()
 
     assert await migrated.get_delivery_method(guild_id=1, user_id=2) is DeliveryMethod.BOTH
+    assert await migrated.get_notification_downtime(guild_id=1, user_id=2) == NotificationDowntime()
     await migrated.set_delivery_method(guild_id=1, user_id=2, delivery_method=DeliveryMethod.PWA)
     assert await migrated.get_delivery_method(guild_id=1, user_id=2) is DeliveryMethod.PWA
+
+
+async def test_notification_downtime_migrates_current_delivery_schema(tmp_path) -> None:
+    database_path = tmp_path / "current.db"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "CREATE TABLE notification_preferences (guild_id INTEGER NOT NULL, "
+            "user_id INTEGER NOT NULL, delivery_method TEXT NOT NULL DEFAULT 'discord' "
+            "CHECK (delivery_method IN ('discord', 'telegram', 'pwa', 'both', "
+            "'discord_pwa', 'telegram_pwa', 'all')), "
+            "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+            "updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (guild_id, user_id))"
+        )
+        connection.execute(
+            "INSERT INTO notification_preferences (guild_id,user_id,delivery_method) "
+            "VALUES (1,2,'all')"
+        )
+    migrated = SubscriptionStore(database_path)
+
+    await migrated.initialize()
+
+    assert await migrated.get_delivery_method(guild_id=1, user_id=2) is DeliveryMethod.ALL
+    assert await migrated.get_notification_downtime(guild_id=1, user_id=2) == NotificationDowntime()
 
 
 async def test_command_policies_default_public_and_unrestricted(

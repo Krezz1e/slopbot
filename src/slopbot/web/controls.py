@@ -48,8 +48,9 @@ class Controls:
         )
         admin = bool(member.guild_permissions.manage_guild)
         args = {"guild_id": guild.id, "user_id": member.id}
-        delivery, telegram, geton, keywords = await asyncio.gather(
+        delivery, downtime, telegram, geton, keywords = await asyncio.gather(
             self.store.get_delivery_method(**args),
+            self.store.get_notification_downtime(**args),
             self.store.get_telegram_chat_id(discord_user_id=member.id),
             self.store.get_geton_enabled(**args),
             self.store.get_keyword_profile(**args),
@@ -64,6 +65,7 @@ class Controls:
             "admin": admin,
             "sessions": await Sessions(self.store).settings(guild.id, member.id),
             "delivery": delivery.value,
+            "downtime": asdict(downtime),
             "telegram_linked": telegram is not None,
             "geton": geton,
             "keywords": asdict(keywords),

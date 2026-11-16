@@ -183,6 +183,15 @@ class VoiceAlertService:
             return
         if any(channel_member.id == subscription.user_id for channel_member in channel.members):
             return
+        if await self._store.notification_downtime_active(
+            guild_id=subscription.guild_id,
+            user_id=subscription.user_id,
+        ):
+            LOGGER.info(
+                "Suppressed voice alert for user %s during notification downtime",
+                subscription.user_id,
+            )
+            return
 
         if transition is Transition.REACHED:
             title = f"{channel.name} is active"

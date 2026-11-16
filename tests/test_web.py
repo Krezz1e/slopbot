@@ -17,6 +17,7 @@ from slopbot.database import SubscriptionStore
 from slopbot.engagement import AddKeywordModal, EngagementCog, KeywordConfigView
 from slopbot.info import InfoCog
 from slopbot.itemshop import ItemShopCog
+from slopbot.models import DeliveryMethod, NotificationDowntime
 from slopbot.rocketleague import RocketLeagueCog, StatusCog
 from slopbot.summary_alerts import SummaryCog
 from slopbot.tournaments import TournamentAlertsCog
@@ -170,6 +171,47 @@ async def test_shared_info_callback_renders_in_browser():
     await invoke_command(i, {"topic": "overview"})
     data = i.flow.render(i)
     assert data["messages"][0]["embeds"][0]["title"] == "Slopbot info — Overview"
+
+
+async def test_shared_notifications_command_configures_downtime_for_web_and_discord():
+    store = SimpleNamespace(
+        get_delivery_method=AsyncMock(return_value=DeliveryMethod.DISCORD),
+        get_notification_downtime=AsyncMock(return_value=NotificationDowntime()),
+        set_notification_downtime=AsyncMock(),
+        get_telegram_chat_id=AsyncMock(return_value=None),
+    )
+    cog = AlertsCog(SimpleNamespace(store=store, telegram=None, web=None))
+    command = cog.notifications
+    command.binding = cog
+    i = interaction(command)
+
+    await invoke_command(
+        i,
+        {
+            "downtime_enabled": True,
+            "downtime_start": "09:00",
+            "downtime_end": "17:00",
+            "downtime_timezone": "America/Los_Angeles",
+        },
+    )
+
+    store.set_notification_downtime.assert_awaited_once_with(
+        guild_id=100,
+        user_id=200,
+        downtime=NotificationDowntime(True, 9 * 60, 17 * 60, "America/Los_Angeles"),
+    )
+    assert (
+        "enabled for 09:00-17:00 America/Los_Angeles" in i.flow.render(i)["messages"][0]["content"]
+    )
+
+    store.set_notification_downtime.reset_mock()
+    invalid = interaction(command)
+    await invoke_command(
+        invalid,
+        {"downtime_enabled": True, "downtime_start": "10:00", "downtime_end": "10:00"},
+    )
+    store.set_notification_downtime.assert_not_awaited()
+    assert "must be different" in invalid.flow.render(invalid)["messages"][0]["content"]
 
 
 async def test_shared_pagination_and_stale_form_protection():
@@ -1380,6 +1422,12 @@ async def test_personal_settings_are_scoped_and_validate_channels(site):
     assert data["keywords"]["keywords"] == ["ranked"]
     assert data["keywords"]["enabled"] is False
     assert data["voice"][0]["channel_id"] == "300"
+    assert data["downtime"] == {
+        "enabled": False,
+        "start_minute": 540,
+        "end_minute": 1020,
+        "timezone": "America/New_York",
+    }
     assert await server.bot.store.list_for_user(guild_id=100, user_id=9002) == []
     voice["channel"] = "999"
     assert (await client.post(url, json=voice, headers=headers)).status == 403

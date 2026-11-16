@@ -27,6 +27,7 @@ from slopbot.models import (
     KeywordNotificationMode,
     KeywordProfile,
     KeywordWatcher,
+    NotificationDowntime,
     ResponseVisibility,
     RocketLeagueAccount,
     RocketLeagueEvent,
@@ -596,6 +597,65 @@ class SubscriptionStore:
             connection.commit()
 
         await self._run(operation)
+
+    async def get_notification_downtime(
+        self, *, guild_id: int, user_id: int
+    ) -> NotificationDowntime:
+        def operation(connection: sqlite3.Connection) -> NotificationDowntime:
+            row = connection.execute(
+                "SELECT downtime_enabled, downtime_start_minute, downtime_end_minute, "
+                "downtime_timezone FROM notification_preferences "
+                "WHERE guild_id = ? AND user_id = ?",
+                (guild_id, user_id),
+            ).fetchone()
+            if row is None:
+                return NotificationDowntime()
+            return NotificationDowntime(
+                enabled=bool(row[0]),
+                start_minute=cast(int, row[1]),
+                end_minute=cast(int, row[2]),
+                timezone=cast(str, row[3]),
+            )
+
+        return await self._run(operation)
+
+    async def set_notification_downtime(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        downtime: NotificationDowntime,
+    ) -> None:
+        def operation(connection: sqlite3.Connection) -> None:
+            connection.execute(
+                """
+                INSERT INTO notification_preferences
+                    (guild_id, user_id, downtime_enabled, downtime_start_minute,
+                     downtime_end_minute, downtime_timezone)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT (guild_id, user_id) DO UPDATE SET
+                    downtime_enabled = excluded.downtime_enabled,
+                    downtime_start_minute = excluded.downtime_start_minute,
+                    downtime_end_minute = excluded.downtime_end_minute,
+                    downtime_timezone = excluded.downtime_timezone,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    guild_id,
+                    user_id,
+                    int(downtime.enabled),
+                    downtime.start_minute,
+                    downtime.end_minute,
+                    downtime.timezone,
+                ),
+            )
+            connection.commit()
+
+        await self._run(operation)
+
+    async def notification_downtime_active(self, *, guild_id: int, user_id: int) -> bool:
+        downtime = await self.get_notification_downtime(guild_id=guild_id, user_id=user_id)
+        return downtime.active_at()
 
     async def get_telegram_chat_id(self, *, discord_user_id: int) -> int | None:
         def operation(connection: sqlite3.Connection) -> int | None:
@@ -4429,6 +4489,13 @@ class SubscriptionStore:
                 delivery_method TEXT NOT NULL DEFAULT 'discord'
                     CHECK (delivery_method IN ('discord', 'telegram', 'pwa', 'both',
                         'discord_pwa', 'telegram_pwa', 'all')),
+                downtime_enabled INTEGER NOT NULL DEFAULT 0
+                    CHECK (downtime_enabled IN (0, 1)),
+                downtime_start_minute INTEGER NOT NULL DEFAULT 540
+                    CHECK (downtime_start_minute BETWEEN 0 AND 1439),
+                downtime_end_minute INTEGER NOT NULL DEFAULT 1020
+                    CHECK (downtime_end_minute BETWEEN 0 AND 1439),
+                downtime_timezone TEXT NOT NULL DEFAULT 'America/New_York',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (guild_id, user_id)
@@ -4448,6 +4515,13 @@ class SubscriptionStore:
                     delivery_method TEXT NOT NULL DEFAULT 'discord'
                         CHECK (delivery_method IN ('discord', 'telegram', 'pwa', 'both',
                             'discord_pwa', 'telegram_pwa', 'all')),
+                    downtime_enabled INTEGER NOT NULL DEFAULT 0
+                        CHECK (downtime_enabled IN (0, 1)),
+                    downtime_start_minute INTEGER NOT NULL DEFAULT 540
+                        CHECK (downtime_start_minute BETWEEN 0 AND 1439),
+                    downtime_end_minute INTEGER NOT NULL DEFAULT 1020
+                        CHECK (downtime_end_minute BETWEEN 0 AND 1439),
+                    downtime_timezone TEXT NOT NULL DEFAULT 'America/New_York',
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (guild_id, user_id)
@@ -4459,6 +4533,31 @@ class SubscriptionStore:
                 DROP TABLE notification_preferences_legacy;
                 """
             )
+        notification_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(notification_preferences)")
+        }
+        for column, declaration in (
+            (
+                "downtime_enabled",
+                "INTEGER NOT NULL DEFAULT 0 CHECK (downtime_enabled IN (0, 1))",
+            ),
+            (
+                "downtime_start_minute",
+                "INTEGER NOT NULL DEFAULT 540 CHECK (downtime_start_minute BETWEEN 0 AND 1439)",
+            ),
+            (
+                "downtime_end_minute",
+                "INTEGER NOT NULL DEFAULT 1020 CHECK (downtime_end_minute BETWEEN 0 AND 1439)",
+            ),
+            (
+                "downtime_timezone",
+                "TEXT NOT NULL DEFAULT 'America/New_York'",
+            ),
+        ):
+            if column not in notification_columns:
+                connection.execute(
+                    f"ALTER TABLE notification_preferences ADD COLUMN {column} {declaration}"
+                )
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS telegram_links (

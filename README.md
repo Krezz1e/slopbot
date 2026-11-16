@@ -11,6 +11,7 @@ and keyword alerts, schedules reminders, and tracks Rocket League activity for a
 
 - Voice-channel threshold alerts and keyword notifications
 - Scheduled get-on requests with Discord and optional Telegram delivery
+- Per-server notification downtime with timezone-aware daily schedules
 - Rocket League ranks, peaks, leaderboards, streaks, match observations, sessions, and MMR charts
 - Tournament reminders and item-shop watches
 - Daily and weekly personal or server reports

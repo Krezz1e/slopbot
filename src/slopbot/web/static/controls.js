@@ -109,10 +109,18 @@ async function notificationsPage(){
   const context=await settingsContext();if(context.empty)return context.empty;
   const {guild,settings:s,selector}=context,endpoint='/api/settings/'+guild.id+'/personal';
   const save=async data=>{await api(endpoint,data);notify('Notification settings saved.');};
-  const delivery=settingsPanel('Private delivery','Applies to your notifications in this server. Telegram and PWA device links are shared across servers.',[
+  const clock=minute=>`${String(Math.floor(minute/60)).padStart(2,'0')}:${String(minute%60).padStart(2,'0')}`;
+  const delivery=settingsPanel('Private delivery','Applies to your private notifications in this server. Telegram and PWA device links are shared across servers.',[
     select('Send alerts through','delivery',[{value:'discord',label:'Discord'},{value:'telegram',label:'Telegram'},{value:'pwa',label:'PWA push'},{value:'both',label:'Discord and Telegram'},{value:'discord_pwa',label:'Discord and PWA push'},{value:'telegram_pwa',label:'Telegram and PWA push'},{value:'all',label:'Discord, Telegram, and PWA push'}],s.delivery)
   ],guild,'notifications',f=>({delivery:f.elements.delivery.value}));
   delivery.append(muted('Telegram '+(s.telegram_linked?'linked':'not linked')+'. Enable this browser below before choosing a PWA push option.'),button('Send personal test',async()=>{const output=el('div');delivery.append(output);try{await settingsCommand(guild,'testnotification',{},output);}catch(e){errorAt(output,e);}},'small'));
+  const downtime=settingsPanel('Notification downtime','Suppress all private notification destinations during a daily window.',[
+    toggle('Enable notification downtime','downtime_enabled',s.downtime.enabled),
+    input('Downtime starts','downtime_start',{type:'time',value:clock(s.downtime.start_minute),required:true}),
+    input('Downtime ends','downtime_end',{type:'time',value:clock(s.downtime.end_minute),required:true}),
+    input('Downtime timezone (IANA)','downtime_timezone',{value:s.downtime.timezone,required:true,maxlength:100})
+  ],guild,'notifications',f=>({downtime_enabled:f.elements.downtime_enabled.checked,downtime_start:f.elements.downtime_start.value,downtime_end:f.elements.downtime_end.value,downtime_timezone:f.elements.downtime_timezone.value.trim()}));
+  downtime.append(muted('Private Discord, Telegram, and PWA notifications are suppressed rather than queued. Overnight windows are supported. Server announcements and command replies continue.'));
   const push=await pushDevicePanel();
   const sessions=personalSessionPanel(guild,s.sessions);sessions.append(button('Daily and weekly summaries',()=>{state.reportFilters={guild_id:guild.id,scope:'self'};navigate('reports');}));
   const invitations=settingsPanel('Invitations to play','Choose whether friends can send you get-on notifications.',[toggle('Receive invitations','enabled',s.geton)],guild,'getonnotifications',f=>({enabled:f.elements.enabled.checked}));
@@ -127,7 +135,7 @@ async function notificationsPage(){
   if(voiceChannels.length)voice.append(form([
     select('Voice channel','channel',voiceChannels.map(c=>({value:c.id,label:c.name}))),input('People threshold','threshold',{type:'number',min:2,max:25,value:3,required:true}),toggle('Threshold reached','reach',true),toggle('Below threshold','drop',false)
   ],async f=>{await save({action:'voice',channel:f.elements.channel.value,threshold:Number(f.elements.threshold.value),reach:f.elements.reach.checked,drop:f.elements.drop.checked});await navigate('notifications');},'Save channel alert'));
-  const root=el('div',{class:'stack'},heading('Your notifications','Your existing private preferences, organized in one place.'),selector,el('div',{class:'grid two'},delivery,push,sessions,invitations),keywords,voice,
+  const root=el('div',{class:'stack'},heading('Your notifications','Your existing private preferences, organized in one place.'),selector,el('div',{class:'grid two'},delivery,downtime,push,sessions,invitations),keywords,voice,
     advancedSetting(guild,'tournamentalerts','Tournament reminders',s.tournament?'Enabled · '+s.tournament.region+' · '+s.tournament.lead_minutes+' minutes before start':'Not enabled. Choose region, lead time, team sizes and game modes.'),
     advancedSetting(guild,'itemshop watches','Item shop watches',s.watches.length+' saved watches. Review and manage your existing watches.'),
     button('Create a shop watch',()=>{state.guild=guild;state.feature='itemshop watch';navigate('server');}));

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 
 from slopbot.web.auth import WebIdentityStore
@@ -14,7 +15,8 @@ def test_vapid_key_is_generated_once_with_private_permissions(tmp_path) -> None:
     assert private_path == second_path == str(path)
     assert public_key == second_public_key
     assert len(public_key) == 87
-    assert path.stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o777 == 0o600
 
 
 async def linked_store(tmp_path):

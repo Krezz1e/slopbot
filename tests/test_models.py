@@ -1,8 +1,52 @@
 from __future__ import annotations
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import pytest
 
-from slopbot.models import Subscription, Transition, detect_transition, validate_tournament_alert
+from slopbot.models import (
+    NotificationDowntime,
+    Subscription,
+    Transition,
+    detect_transition,
+    validate_tournament_alert,
+)
+
+
+def local_timestamp(hour: int, minute: int, timezone: str = "America/New_York") -> float:
+    return datetime(2026, 1, 15, hour, minute, tzinfo=ZoneInfo(timezone)).timestamp()
+
+
+def test_notification_downtime_uses_local_start_inclusive_end_exclusive() -> None:
+    downtime = NotificationDowntime(True, 9 * 60, 17 * 60, "America/New_York")
+
+    assert not downtime.active_at(local_timestamp(8, 59))
+    assert downtime.active_at(local_timestamp(9, 0))
+    assert downtime.active_at(local_timestamp(16, 59))
+    assert not downtime.active_at(local_timestamp(17, 0))
+
+
+def test_notification_downtime_supports_overnight_windows() -> None:
+    downtime = NotificationDowntime(True, 22 * 60, 7 * 60, "America/New_York")
+
+    assert downtime.active_at(local_timestamp(23, 0))
+    assert downtime.active_at(local_timestamp(6, 59))
+    assert not downtime.active_at(local_timestamp(12, 0))
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"start_minute": 60, "end_minute": 60},
+        {"timezone": "Missing/Timezone"},
+        {"start_minute": -1},
+        {"end_minute": 24 * 60},
+    ],
+)
+def test_notification_downtime_rejects_invalid_settings(kwargs: dict[str, object]) -> None:
+    with pytest.raises(ValueError):
+        NotificationDowntime(**kwargs)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(

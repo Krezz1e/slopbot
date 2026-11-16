@@ -650,12 +650,22 @@ async def send_to_destinations(
     completed: frozenset[str] = frozenset(),
 ) -> DeliveryOutcome:
     delivery = await store.get_delivery_method(guild_id=guild_id, user_id=recipient_id)
+    channels = delivery_channels(delivery)
+    if await store.notification_downtime_active(guild_id=guild_id, user_id=recipient_id):
+        detail = "Notification downtime is active; this alert was suppressed and not queued"
+        quiet_receipts = tuple(
+            (channel, "blocked", detail) for channel in sorted(channels) if channel not in completed
+        )
+        return DeliveryOutcome(
+            delivered=bool(completed),
+            retryable=False,
+            detail=detail,
+            receipts=quiet_receipts,
+        )
     delivered = False
     retryable = False
     details: list[str] = []
     receipts: list[tuple[str, str, str]] = []
-    channels = delivery_channels(delivery)
-
     telegram_requested = "telegram" in channels
     telegram_delivered = "telegram" in completed
     if telegram_requested and not telegram_delivered:

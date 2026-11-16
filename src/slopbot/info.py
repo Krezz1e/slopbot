@@ -129,12 +129,14 @@ CAPABILITY_TOPICS: dict[str, CapabilityTopic] = {
                 (
                     "Your preference is saved separately for each Discord server and is shared "
                     "by voice, keyword, get-on, tournament, item-shop, and personal status alerts. "
-                    "Run the command without a choice to inspect the current setting."
+                    "Daily notification downtime can suppress every private destination in an "
+                    "IANA timezone; suppressed alerts are not queued. Run the command without a "
+                    "choice to inspect the current setting."
                 ),
                 (
                     CommandInfo(
                         "notifications",
-                        "View or choose Discord, Telegram, PWA push, or a combination.",
+                        "Choose destinations and configure daily notification downtime.",
                     ),
                     CommandInfo(
                         "testnotification",

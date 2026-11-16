@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 MIN_THRESHOLD = 2
 MAX_THRESHOLD = 25
 MAX_SUBSCRIPTIONS_PER_USER = 25
 MAX_ITEM_SHOP_WATCHES_PER_USER = 25
+DEFAULT_NOTIFICATION_DOWNTIME_START_MINUTE = 9 * 60
+DEFAULT_NOTIFICATION_DOWNTIME_END_MINUTE = 17 * 60
+DEFAULT_NOTIFICATION_DOWNTIME_TIMEZONE = "America/New_York"
 MIN_TOURNAMENT_LEAD_MINUTES = 5
 MAX_TOURNAMENT_LEAD_MINUTES = 120
 TOURNAMENT_TEAM_SIZES = (1, 2, 3)
@@ -35,6 +40,42 @@ class DeliveryMethod(str, Enum):
     DISCORD_PWA = "discord_pwa"
     TELEGRAM_PWA = "telegram_pwa"
     ALL = "all"
+
+
+@dataclass(frozen=True, slots=True)
+class NotificationDowntime:
+    enabled: bool = False
+    start_minute: int = DEFAULT_NOTIFICATION_DOWNTIME_START_MINUTE
+    end_minute: int = DEFAULT_NOTIFICATION_DOWNTIME_END_MINUTE
+    timezone: str = DEFAULT_NOTIFICATION_DOWNTIME_TIMEZONE
+
+    def __post_init__(self) -> None:
+        if type(self.enabled) is not bool:
+            raise ValueError("downtime enabled must be true or false")
+        for label, value in (("start", self.start_minute), ("end", self.end_minute)):
+            if type(value) is not int or not 0 <= value < 24 * 60:
+                raise ValueError(f"downtime {label} must be a minute of the day")
+        if self.start_minute == self.end_minute:
+            raise ValueError("downtime start and end must be different")
+        if not isinstance(self.timezone, str) or len(self.timezone) > 100:
+            raise ValueError("choose an IANA timezone, such as America/New_York")
+        try:
+            ZoneInfo(self.timezone)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError("unknown timezone; use an IANA name such as America/New_York") from exc
+
+    def active_at(self, timestamp: float | None = None) -> bool:
+        if not self.enabled:
+            return False
+        local = (
+            datetime.now(ZoneInfo(self.timezone))
+            if timestamp is None
+            else datetime.fromtimestamp(timestamp, ZoneInfo(self.timezone))
+        )
+        minute = local.hour * 60 + local.minute
+        if self.start_minute < self.end_minute:
+            return self.start_minute <= minute < self.end_minute
+        return minute >= self.start_minute or minute < self.end_minute
 
 
 def delivery_channels(delivery: DeliveryMethod) -> frozenset[str]:

@@ -1,0 +1,5 @@
+.topbar-right{display:flex;align-items:center;gap:20px;min-width:0}
+.topbar-right #live-status{font-size:12px;white-space:nowrap}
+.install-button[hidden]{display:none}
+@media(display-mode:standalone){.sidebar{padding-top:max(32px,env(safe-area-inset-top))}.topbar{padding-right:max(40px,env(safe-area-inset-right))}main{padding-bottom:max(40px,env(safe-area-inset-bottom))}}
+@media(max-width:760px){.topbar-right{gap:10px}.topbar-right #live-status{display:none}}

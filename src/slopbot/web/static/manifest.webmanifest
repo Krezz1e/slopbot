@@ -1,0 +1,26 @@
+{
+  "id": "/",
+  "name": "Slopbot",
+  "short_name": "Slopbot",
+  "description": "Rocket League progress, match history, and Slopbot server tools.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f7f8fa",
+  "theme_color": "#2563eb",
+  "categories": ["games", "utilities"],
+  "icons": [
+    {
+      "src": "/static/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/static/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

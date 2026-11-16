@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+checkout="${SLOPBOT_RL_CHECKOUT:-/opt/slopbot}"
+state_dir="${SLOPBOT_RL_UPDATE_STATE_DIR:-/var/lib/slopbot}"
+binary="${SLOPBOT_RL_BINARY:-/opt/slopbot/bin/slopbot-rl}"
+ready_url="${SLOPBOT_RL_READY_URL:-http://127.0.0.1:8765/readyz}"
+marker="$state_dir/rlservice-tree"
+lock="$state_dir/rlservice-update.lock"
+backup_dir="$state_dir/rlservice-backups"
+
+mkdir -p "$state_dir" "$backup_dir"
+exec 9>"$lock"
+flock -n 9 || exit 0
+
+git -C "$checkout" fetch --quiet --prune origin main
+tree="$(git -C "$checkout" rev-parse 'origin/main:rlservice')"
+if [[ ! "$tree" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "Refusing unexpected Rocket League source tree: $tree" >&2
+  exit 1
+fi
+if [[ -f "$marker" ]] && [[ "$(<"$marker")" == "$tree" ]]; then
+  exit 0
+fi
+
+stage="$(mktemp -d "$state_dir/rlservice-update.XXXXXX")"
+trap 'rm -rf -- "$stage"' EXIT
+git -C "$checkout" archive origin/main rlservice | tar -xf - -C "$stage"
+CGO_ENABLED=0 go -C "$stage/rlservice" build \
+  -trimpath -o "$stage/slopbot-rl" ./cmd/slopbot-rl
+
+backup="$backup_dir/slopbot-rl-${tree:0:12}"
+cp --preserve=mode,timestamps -- "$binary" "$backup"
+sha256sum "$stage/slopbot-rl" > "$backup.sha256.next"
+mv -f -- "$backup.sha256.next" "$backup.sha256"
+install -m 0755 -- "$stage/slopbot-rl" "$binary.next"
+mv -f -- "$binary.next" "$binary"
+
+restart_and_wait() {
+  local pid status
+  pid="$(systemctl show slopbot-rl.service --property MainPID --value)"
+  if [[ "$pid" =~ ^[1-9][0-9]*$ ]]; then
+    kill -KILL "$pid"
+  fi
+  for _ in $(seq 1 45); do
+    sleep 2
+    status="$(curl --silent --output /dev/null --write-out '%{http_code}' "$ready_url" || true)"
+    if [[ "$status" == "200" || "$status" == "428" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+if restart_and_wait; then
+  printf '%s\n' "$tree" > "$marker.next"
+  mv -f -- "$marker.next" "$marker"
+  echo "Installed Rocket League service tree ${tree:0:12}"
+  exit 0
+fi
+
+echo "Rocket League service tree ${tree:0:12} failed readiness; rolling back" >&2
+install -m 0755 -- "$backup" "$binary.next"
+mv -f -- "$binary.next" "$binary"
+if ! restart_and_wait; then
+  echo "Rocket League rollback also failed readiness" >&2
+fi
+exit 1

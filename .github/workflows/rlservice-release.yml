@@ -1,0 +1,54 @@
+name: Rocket League service release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "rlservice/**"
+      - ".github/workflows/rlservice-release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rlservice-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: rlservice/go.mod
+          cache-dependency-path: rlservice/go.sum
+
+      - name: Test and build ARM64 service
+        run: |
+          go -C rlservice test ./...
+          go -C rlservice vet ./...
+          mkdir -p work/release
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go -C rlservice build -trimpath -o ../work/release/slopbot-rl-linux-arm64 ./cmd/slopbot-rl
+          cd work/release
+          sha256sum slopbot-rl-linux-arm64 > slopbot-rl-linux-arm64.sha256
+
+      - name: Publish checksummed release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          tag="rlservice-${GITHUB_SHA::12}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" work/release/* --clobber
+          else
+            gh release create "$tag" work/release/* \
+              --latest \
+              --title "Rocket League service ${GITHUB_SHA::12}" \
+              --notes "Tested Linux ARM64 Slopbot Rocket League service from ${GITHUB_SHA}."
+          fi

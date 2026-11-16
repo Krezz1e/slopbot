@@ -1,0 +1,1 @@
+17 * * * * /opt/slopbot/deploy/slopbot-rl-update >>/var/lib/slopbot/rlservice-update.log 2>&1

@@ -1,0 +1,75 @@
+name: Rocket League dependency update
+
+on:
+  schedule:
+    - cron: "17 13 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: rlapi-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: rlservice/go.mod
+          cache-dependency-path: rlservice/go.sum
+
+      - name: Update rlapi and protocol fixture
+        run: python scripts/update_rlapi.py
+
+      - name: Detect update
+        id: changes
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "version=$(python -c 'import json; print(json.load(open("rlservice/protocol-defaults.json"))["rlapi_version"])')" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate update
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          go -C rlservice test ./...
+          go -C rlservice vet ./...
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go -C rlservice build -trimpath -o ../work/slopbot-rl-linux-arm64 ./cmd/slopbot-rl
+
+      - name: Open pull request
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.changes.outputs.version }}
+        shell: bash
+        run: |
+          branch="automation/rlapi-${VERSION}"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "Branch $branch already exists; leaving its pull request unchanged."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add rlservice/go.mod rlservice/go.sum rlservice/protocol-defaults.json
+          git commit -m "Update Rocket League protocol client to ${VERSION}"
+          git push origin "$branch"
+          gh pr create \
+            --base main \
+            --head "$branch" \
+            --title "Update Rocket League protocol client to ${VERSION}" \
+            --body "Automated rlapi update. CI validates the Go service, web command coverage, and the ARM64 build before merge."

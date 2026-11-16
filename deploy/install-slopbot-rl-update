@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+line="$(<"$(dirname "$0")/slopbot-rl-update.cron")"
+existing="$(crontab -l 2>/dev/null || true)"
+if grep -Fqx -- "$line" <<<"$existing"; then
+  exit 0
+fi
+{
+  if [[ -n "$existing" ]]; then
+    printf '%s\n' "$existing"
+  fi
+  printf '%s\n' "$line"
+} | crontab -

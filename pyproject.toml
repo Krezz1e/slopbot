@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "slopbot"
+version = "1.8.2"
+description = "Discord alerts, scheduled notifications, and Rocket League tools."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+  "aiohttp==3.14.3",
+  "discord.py==2.7.1",
+  "Pillow==11.3.0",
+  "pywebpush==2.5.0",
+  "tzdata==2026.3; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy==1.17.1",
+  "pytest==8.4.2",
+  "pytest-asyncio==1.1.0",
+  "ruff==0.12.12",
+]
+
+[project.scripts]
+slopbot = "slopbot.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"slopbot.web" = ["static/*.html", "static/*.css", "static/*.js", "static/*.png", "static/*.woff2", "static/*.webmanifest"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["slopbot"]
